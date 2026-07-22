@@ -1,0 +1,24 @@
+services:
+  backend:
+    image: ${REGISTRY}/${IMAGE_NAMESPACE}/baby-education-backend:${VERSION}
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      DATABASE_URL: ${DATABASE_URL}
+      REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS}
+    volumes:
+      - backend_data:/app/data
+    ports:
+      - "${BACKEND_PORT}:8000"
+
+  frontend:
+    image: ${REGISTRY}/${IMAGE_NAMESPACE}/baby-education-frontend:${VERSION}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT}:80"
+
+volumes:
+  backend_data:
