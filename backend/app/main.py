@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .database import Base, engine, get_db
-from .llm import LLMRuntimeConfig, generate_story, generate_story_topic
+from .llm import LLMRuntimeConfig, generate_story, generate_story_topics
 from .models import AIConfig, Story, User
 from .schemas import (
     AIConfigRead,
@@ -17,7 +17,7 @@ from .schemas import (
     StoryCreate,
     StoryRead,
     StorySummary,
-    StoryTopicRead,
+    StoryTopicsRead,
     UserCreate,
 )
 from .security import create_access_token, get_current_user, hash_password, verify_password
@@ -177,17 +177,18 @@ def list_stories(
     return list(db.scalars(statement).all())
 
 
-@app.get("/api/story-topics/random", response_model=StoryTopicRead)
-async def random_story_topic(
+@app.get("/api/story-topics/random", response_model=StoryTopicsRead)
+async def random_story_topics(
+    count: int = Query(default=4, ge=2, le=6),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> StoryTopicRead:
+) -> StoryTopicsRead:
     config = db.scalar(select(AIConfig).where(AIConfig.user_id == user.id))
     try:
-        topic, source = await generate_story_topic(runtime_ai_config(config))
+        topics, source = await generate_story_topics(runtime_ai_config(config), count)
     except Exception:
-        topic, source = await generate_story_topic(runtime_ai_config(None))
-    return StoryTopicRead(topic=topic, source=source)
+        topics, source = await generate_story_topics(runtime_ai_config(None), count)
+    return StoryTopicsRead(topics=topics, source=source)
 
 
 @app.post("/api/stories", response_model=StoryRead)

@@ -35,6 +35,11 @@ export type StoryTopic = {
   source: string;
 };
 
+export type StoryTopics = {
+  topics: string[];
+  source: string;
+};
+
 export type AIConfig = {
   base_url: string;
   model: string;
@@ -130,7 +135,7 @@ export const api = {
   deleteStory(token: string, id: number) {
     return request<void>(`/stories/${id}`, { method: "DELETE" }, token);
   },
-  randomStoryTopic(token: string) {
-    return request<StoryTopic>("/story-topics/random", {}, token);
+  randomStoryTopics(token: string, count = 4) {
+    return request<StoryTopics>(`/story-topics/random?count=${count}`, {}, token);
   }
 };

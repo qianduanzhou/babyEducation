@@ -55,6 +55,11 @@ class StoryTopicRead(BaseModel):
     source: str
 
 
+class StoryTopicsRead(BaseModel):
+    topics: list[str] = Field(min_length=2, max_length=6)
+    source: str
+
+
 class AIConfigRead(BaseModel):
     base_url: str
     model: str

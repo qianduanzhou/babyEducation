@@ -46,7 +46,64 @@ FALLBACK_TOPICS = [
     "把椅子放好的小老虎",
     "睡前收玩具的小狐狸",
     "慢慢吃饭的小海豚",
+    "雨天为蜗牛撑叶子伞的小鹿",
+    "学会耐心等待花开的豆豆",
+    "迷路后勇敢向老师求助的小企鹅",
+    "把难过说出来的小海狸",
+    "第一次登台唱歌的小云雀",
+    "愿意原谅朋友的小熊猫",
+    "发现每个人都有闪光点的小羊",
+    "给自己加油的小乌龟",
+    "认真倾听朋友心事的小狗",
+    "和新同学打招呼的小浣熊",
+    "一起完成拼图的两只小猫",
+    "轮流荡秋千的小猴和小鹿",
+    "把好消息分享给大家的小松鼠",
+    "帮弟弟系鞋带的小象姐姐",
+    "为奶奶读一首诗的小女孩",
+    "全家一起做早餐的星期天",
+    "把想念画成月亮的小男孩",
+    "给邻居送一束花的小兔",
+    "听风讲故事的小树苗",
+    "跟着星星认识夜晚的小猫头鹰",
+    "春天寻找第一朵花的小蜜蜂",
+    "秋天收集不同颜色叶子的小刺猬",
+    "和小雨滴做朋友的小青蛙",
+    "雪地里留下温暖脚印的小狐狸",
+    "学会观察云朵的小马",
+    "给小鸟留一碗清水的小女孩",
+    "保护蒲公英种子的小兔",
+    "让小河重新清亮的小水獭",
+    "把垃圾送回家的小海龟",
+    "节约一滴水的水龙头小卫士",
+    "用旧盒子做小房子的创意日",
+    "种下一颗会许愿的向日葵",
+    "第一次学包饺子的小熊",
+    "和爷爷做风筝的小女孩",
+    "听外婆讲节气故事的小鹿",
+    "月光下的中秋团圆小船",
+    "把祝福写进春联的小狐狸",
+    "用彩笔记录心情的小河马",
+    "发现数字藏在生活里的小鸭子",
+    "会问为什么的小小探险家",
+    "搭一座友谊桥的小工程师",
+    "把失败变成新办法的小松鼠",
+    "安静呼吸赶走小着急的小熊",
+    "愿意尝试新食物的小奶牛",
+    "自己整理书包的成长第一天",
+    "听见身体需要休息的小树懒",
+    "在镜子前喜欢自己的小斑马",
+    "把谢谢藏进一封信里的小朋友",
 ]
+
+# The list is intentionally ordered by theme so a fallback batch can offer
+# noticeably different kinds of story ideas instead of four similar habits.
+FALLBACK_TOPIC_GROUPS = (
+    FALLBACK_TOPICS[:16],
+    FALLBACK_TOPICS[16:33],
+    FALLBACK_TOPICS[33:49],
+    FALLBACK_TOPICS[49:],
+)
 
 
 def language_instruction(language: str) -> str:
@@ -102,10 +159,24 @@ async def generate_story(
         return split_title(content, topic)
 
 
-async def generate_story_topic(llm_config: LLMRuntimeConfig) -> tuple[str, str]:
+def fallback_story_topics(count: int) -> list[str]:
+    group_count = min(count, len(FALLBACK_TOPIC_GROUPS))
+    selected_groups = random.sample(FALLBACK_TOPIC_GROUPS, group_count)
+    topics = [random.choice(group) for group in selected_groups if group]
+    remaining = [topic for topic in FALLBACK_TOPICS if topic not in topics]
+    topics.extend(random.sample(remaining, min(count - len(topics), len(remaining))))
+    random.shuffle(topics)
+    return topics
+
+
+async def generate_story_topics(
+    llm_config: LLMRuntimeConfig,
+    count: int = 4,
+) -> tuple[list[str], str]:
     settings = get_settings()
+    count = max(2, min(count, 6))
     if not llm_config.api_key:
-        return random.choice(FALLBACK_TOPICS), "fallback"
+        return fallback_story_topics(count), "fallback"
 
     headers = {
         "Authorization": f"Bearer {llm_config.api_key}",
@@ -113,13 +184,15 @@ async def generate_story_topic(llm_config: LLMRuntimeConfig) -> tuple[str, str]:
         **parse_headers(llm_config.headers),
     }
     base_url = llm_config.base_url.rstrip("/")
-    prompt = """
-Generate exactly one Chinese topic for a gentle prenatal and early-childhood moral story.
+    prompt = f"""
+Generate exactly {count} distinct Chinese topics for gentle prenatal and early-childhood stories.
 Rules:
-- Use small animals and a simple daily habit or good character lesson.
-- Suitable themes: politeness, sharing, washing hands, washing fruit, honesty, helping parents, going to school happily, correcting mistakes, keeping toys tidy, speaking softly, listening to kind safety reminders.
+- Make each topic feel like a concrete, warm mini-adventure: include a character, a setting or event, and a gentle growth meaning.
+- Make all {count} topics clearly different in both content and tone. Cover different directions such as emotions or self-confidence, friendship or family, nature or seasonal discovery, and creativity or perseverance. Do not reuse the same protagonist type, setting, or lesson.
+- Vary the protagonist and setting. You may use animals, children, family members, neighbors, plants, small objects, or imaginative-but-safe nature friends; scenes can happen at home, school, a garden, a market, a park, a library, a rainy day, a holiday, or under the night sky.
+- Avoid repeatedly using only manners, washing, sharing, or the same animal.
 - Avoid frightening or harsh topics: traps, injury, blood, hospitals, death, monsters, weapons, punishment, scary danger.
-- Output only the topic text, no quotes, no list marker, no explanation.
+- Output exactly {count} lines, one topic per line. Do not use numbers, bullets, quotes, headings, or explanations.
 """.strip()
     if llm_config.extra_prompt:
         prompt = f"{prompt}\nExtra user preference: {llm_config.extra_prompt}"
@@ -137,15 +210,31 @@ Rules:
         response = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
         response.raise_for_status()
         data = response.json()
-        topic = clean_topic(data["choices"][0]["message"]["content"])
-        return topic or random.choice(FALLBACK_TOPICS), "llm"
+        topics = clean_topics(data["choices"][0]["message"]["content"])
+        if len(topics) < count:
+            raise ValueError("Model returned fewer topic ideas than requested")
+        return topics[:count], "llm"
+
+
+async def generate_story_topic(llm_config: LLMRuntimeConfig) -> tuple[str, str]:
+    topics, source = await generate_story_topics(llm_config, count=2)
+    return topics[0], source
 
 
 def clean_topic(content: str) -> str:
     topic = content.strip().splitlines()[0].strip()
-    topic = re.sub(r"^[-*\d.、\s]+", "", topic)
+    topic = re.sub(r"^\s*(?:[-*•]|\d+[.、)）])?\s*", "", topic)
     topic = topic.strip("\"'“”‘’` ")
     return topic[:120]
+
+
+def clean_topics(content: str) -> list[str]:
+    topics: list[str] = []
+    for line in content.splitlines():
+        topic = clean_topic(line)
+        if topic and topic not in topics:
+            topics.append(topic)
+    return topics
 
 
 def parse_headers(raw_headers: str) -> dict[str, str]:

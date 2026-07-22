@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowUp,
@@ -59,7 +59,54 @@ const prenatalStoryTopics = [
   "爱护图书的小熊猫",
   "把椅子放好的小老虎",
   "睡前收玩具的小狐狸",
-  "慢慢吃饭的小海豚"
+  "慢慢吃饭的小海豚",
+  "雨天为蜗牛撑叶子伞的小鹿",
+  "学会耐心等待花开的豆豆",
+  "迷路后勇敢向老师求助的小企鹅",
+  "把难过说出来的小海狸",
+  "第一次登台唱歌的小云雀",
+  "愿意原谅朋友的小熊猫",
+  "发现每个人都有闪光点的小羊",
+  "给自己加油的小乌龟",
+  "认真倾听朋友心事的小狗",
+  "和新同学打招呼的小浣熊",
+  "一起完成拼图的两只小猫",
+  "轮流荡秋千的小猴和小鹿",
+  "帮弟弟系鞋带的小象姐姐",
+  "为奶奶读一首诗的小女孩",
+  "全家一起做早餐的星期天",
+  "把想念画成月亮的小男孩",
+  "给邻居送一束花的小兔",
+  "听风讲故事的小树苗",
+  "跟着星星认识夜晚的小猫头鹰",
+  "春天寻找第一朵花的小蜜蜂",
+  "秋天收集不同颜色叶子的小刺猬",
+  "和小雨滴做朋友的小青蛙",
+  "雪地里留下温暖脚印的小狐狸",
+  "学会观察云朵的小马",
+  "给小鸟留一碗清水的小女孩",
+  "保护蒲公英种子的小兔",
+  "让小河重新清亮的小水獭",
+  "把垃圾送回家的小海龟",
+  "节约一滴水的水龙头小卫士",
+  "用旧盒子做小房子的创意日",
+  "种下一颗会许愿的向日葵",
+  "第一次学包饺子的小熊",
+  "和爷爷做风筝的小女孩",
+  "听外婆讲节气故事的小鹿",
+  "月光下的中秋团圆小船",
+  "把祝福写进春联的小狐狸",
+  "用彩笔记录心情的小河马",
+  "发现数字藏在生活里的小鸭子",
+  "会问为什么的小小探险家",
+  "搭一座友谊桥的小工程师",
+  "把失败变成新办法的小松鼠",
+  "安静呼吸赶走小着急的小熊",
+  "愿意尝试新食物的小奶牛",
+  "自己整理书包的成长第一天",
+  "听见身体需要休息的小树懒",
+  "在镜子前喜欢自己的小斑马",
+  "把谢谢藏进一封信里的小朋友"
 ];
 
 const emptyAIConfig: AIConfig = {
@@ -79,10 +126,24 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   ]);
 }
 
-function pickLocalTopic(currentTopic: string) {
-  const nextTopics = prenatalStoryTopics.filter((item) => item !== currentTopic);
-  const pool = nextTopics.length ? nextTopics : prenatalStoryTopics;
-  return pool[Math.floor(Math.random() * pool.length)];
+function pickLocalTopics(currentTopic: string, count = 4) {
+  const topicGroups = [
+    prenatalStoryTopics.slice(0, 16),
+    prenatalStoryTopics.slice(16, 33),
+    prenatalStoryTopics.slice(33, 49),
+    prenatalStoryTopics.slice(49)
+  ];
+  const topics = topicGroups.map((group) => {
+    const choices = group.filter((item) => item !== currentTopic);
+    const pool = choices.length ? choices : group;
+    return pool[Math.floor(Math.random() * pool.length)];
+  });
+  const remaining = prenatalStoryTopics.filter((item) => item !== currentTopic && !topics.includes(item));
+  while (topics.length < count && remaining.length) {
+    const index = Math.floor(Math.random() * remaining.length);
+    topics.push(remaining.splice(index, 1)[0]);
+  }
+  return topics.sort(() => Math.random() - 0.5).slice(0, count);
 }
 
 function getErrorMessage(err: unknown, fallback: string) {
@@ -626,29 +687,23 @@ function StoryCreator({
   const [extraPrompt, setExtraPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [randomizingTopic, setRandomizingTopic] = useState(false);
-  const suggestions = useMemo(() => [
-    "爱洗手的小花猫",
-    "愿意分享玩具的小熊",
-    "认真洗水果的小猪",
-    "知错就改的小象"
-  ], []);
+  const [randomTopics, setRandomTopics] = useState<string[]>([]);
 
   async function randomizeTopic() {
     if (randomizingTopic) return;
     setRandomizingTopic(true);
-    let nextTopic = "";
+    let nextTopics: string[] = [];
     try {
-      const generated = await withTimeout(api.randomStoryTopic(token), 12000);
-      if (generated.topic.trim()) {
-        nextTopic = generated.topic.trim();
-      }
+      const generated = await withTimeout(api.randomStoryTopics(token, 4), 12000);
+      nextTopics = [...new Set(generated.topics.map((item) => item.trim()).filter(Boolean))];
     } catch {
-      nextTopic = pickLocalTopic(topic);
+      nextTopics = pickLocalTopics(topic);
     } finally {
-      if (!nextTopic) {
-        nextTopic = pickLocalTopic(topic);
+      if (nextTopics.length !== 4) {
+        nextTopics = pickLocalTopics(topic);
       }
-      setTopic(nextTopic);
+      setRandomTopics(nextTopics);
+      setTopic(nextTopics[0]);
       setRandomizingTopic(false);
     }
   }
@@ -698,7 +753,7 @@ function StoryCreator({
             className="icon-only soft-action"
             type="button"
             onClick={randomizeTopic}
-            title="优先用 AI 随机生成胎教主题"
+            title="优先用 AI 生成 4 个不同风格的主题"
             disabled={randomizingTopic}
           >
             {randomizingTopic ? <LoaderCircle className="spin" size={18} /> : <Shuffle size={18} />}
@@ -706,11 +761,28 @@ function StoryCreator({
         </div>
       </label>
 
-      <div className="chips">
-        {suggestions.map((item) => (
-          <button key={item} type="button" onClick={() => setTopic(item)}>{item}</button>
-        ))}
-      </div>
+      {randomTopics.length > 0 && (
+        <section className="random-topic-panel" aria-label="随机主题候选">
+          <div className="random-topic-heading">
+            <span>本次灵感</span>
+            <small>已默认选中第一个，可点击切换</small>
+          </div>
+          <div className="random-topic-list">
+            {randomTopics.map((item, index) => (
+              <button
+                key={item}
+                type="button"
+                className={item === topic ? "selected" : ""}
+                aria-pressed={item === topic}
+                onClick={() => setTopic(item)}
+              >
+                <b>{String(index + 1).padStart(2, "0")}</b>
+                <span>{item}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <label>
         本次补充提示词
