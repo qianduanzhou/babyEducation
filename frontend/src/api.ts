@@ -22,6 +22,16 @@ export type StorySummary = {
 
 export type Story = StorySummary & {
   content: string;
+  illustrations: StoryIllustration[];
+};
+
+export type StoryIllustration = {
+  id: number;
+  chapter_index: number;
+  chapter_text: string;
+  image_url: string | null;
+  status: "pending" | "generating" | "ready" | "failed" | "unavailable";
+  error: string | null;
 };
 
 export type StoryCreate = {
@@ -43,18 +53,27 @@ export type StoryTopics = {
 export type AIConfig = {
   base_url: string;
   model: string;
+  image_base_url: string;
+  image_model: string;
+  image_headers: string;
   headers: string;
   extra_prompt: string;
   has_api_key: boolean;
+  has_image_api_key: boolean;
 };
 
 export type AIConfigUpdate = {
   base_url: string;
   model: string;
+  image_base_url: string;
+  image_model: string;
+  image_headers: string;
   headers: string;
   extra_prompt: string;
   api_key?: string | null;
+  image_api_key?: string | null;
   clear_api_key?: boolean;
+  clear_image_api_key?: boolean;
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -123,6 +142,9 @@ export const api = {
   getStory(token: string, id: number) {
     return request<Story>(`/stories/${id}`, {}, token);
   },
+  generateStoryIllustrations(token: string, id: number) {
+    return request<Story>(`/stories/${id}/illustrations`, { method: "POST" }, token);
+  },
   createStory(token: string, payload: StoryCreate) {
     return request<Story>("/stories", {
       method: "POST",
@@ -137,5 +159,8 @@ export const api = {
   },
   randomStoryTopics(token: string, count = 4) {
     return request<StoryTopics>(`/story-topics/random?count=${count}`, {}, token);
+  },
+  mediaUrl(path: string) {
+    return API_BASE.startsWith("http") ? new URL(path, API_BASE).toString() : path;
   }
 };

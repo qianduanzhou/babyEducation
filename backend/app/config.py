@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24 * 7
 
     request_timeout_seconds: int = 60
+    image_request_timeout_seconds: int = 120
+    generated_images_dir: str = "data/generated-images"
 
     model_config = SettingsConfigDict(env_file=("../.env", ".env"), env_file_encoding="utf-8", extra="ignore")
 

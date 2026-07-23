@@ -1,15 +1,23 @@
 import json
+import os
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from .config import get_settings
-from .database import Base, engine, get_db
+from .database import Base, engine, get_db, migrate_database
+from .illustrations import (
+    ImageRuntimeConfig,
+    generate_story_illustrations_task,
+    remove_story_illustrations,
+    split_story_chapters,
+)
 from .llm import LLMRuntimeConfig, generate_story, generate_story_topics
-from .models import AIConfig, Story, User
+from .models import AIConfig, Story, StoryIllustration, User
 from .schemas import (
     AIConfigRead,
     AIConfigUpdate,
@@ -25,6 +33,8 @@ from .security import create_access_token, get_current_user, hash_password, veri
 
 settings = get_settings()
 Base.metadata.create_all(bind=engine)
+migrate_database()
+os.makedirs(settings.generated_images_dir, exist_ok=True)
 
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
@@ -34,6 +44,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.mount("/api/media", StaticFiles(directory=settings.generated_images_dir), name="generated-images")
 
 
 @app.get("/api/health")
@@ -45,9 +56,13 @@ def default_ai_config() -> AIConfigRead:
     return AIConfigRead(
         base_url="https://api.openai.com/v1",
         model="gpt-4o-mini",
+        image_base_url="",
+        image_model="gpt-image-2",
+        image_headers="{}",
         headers="{}",
         extra_prompt="",
         has_api_key=False,
+        has_image_api_key=False,
     )
 
 
@@ -57,9 +72,13 @@ def read_ai_config(config: AIConfig | None) -> AIConfigRead:
     return AIConfigRead(
         base_url=config.base_url,
         model=config.model,
+        image_base_url=config.image_base_url,
+        image_model=config.image_model,
+        image_headers=config.image_headers,
         headers=config.headers,
         extra_prompt=config.extra_prompt,
         has_api_key=bool(config.api_key),
+        has_image_api_key=bool(config.image_api_key),
     )
 
 
@@ -80,6 +99,19 @@ def runtime_ai_config(config: AIConfig | None) -> LLMRuntimeConfig:
         headers=config.headers,
         extra_prompt=config.extra_prompt,
     )
+
+
+def runtime_image_config(config: AIConfig) -> ImageRuntimeConfig:
+    return ImageRuntimeConfig(
+        base_url=config.image_base_url,
+        api_key=config.image_api_key,
+        model=config.image_model,
+        headers=config.image_headers,
+    )
+
+
+def is_image_configured(config: AIConfig | None) -> bool:
+    return bool(config and config.image_base_url.strip() and config.image_api_key.strip() and config.image_model.strip())
 
 
 def model_error_message(exc: Exception) -> str:
@@ -139,9 +171,10 @@ def save_ai_config(
 ) -> AIConfigRead:
     try:
         parsed_headers = json.loads(payload.headers or "{}")
+        parsed_image_headers = json.loads(payload.image_headers or "{}")
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=422, detail="Headers 必须是合法的 JSON") from exc
-    if not isinstance(parsed_headers, dict):
+    if not isinstance(parsed_headers, dict) or not isinstance(parsed_image_headers, dict):
         raise HTTPException(status_code=422, detail="Headers 必须是 JSON 对象")
 
     config = db.scalar(select(AIConfig).where(AIConfig.user_id == user.id))
@@ -151,12 +184,19 @@ def save_ai_config(
 
     config.base_url = payload.base_url.strip().rstrip("/") or "https://api.openai.com/v1"
     config.model = payload.model.strip() or "gpt-4o-mini"
+    config.image_base_url = payload.image_base_url.strip().rstrip("/")
+    config.image_model = payload.image_model.strip() or "gpt-image-2"
     config.headers = json.dumps(parsed_headers, ensure_ascii=False)
+    config.image_headers = json.dumps(parsed_image_headers, ensure_ascii=False)
     config.extra_prompt = payload.extra_prompt.strip()
     if payload.clear_api_key:
         config.api_key = ""
     elif payload.api_key is not None and payload.api_key.strip():
         config.api_key = payload.api_key.strip()
+    if payload.clear_image_api_key:
+        config.image_api_key = ""
+    elif payload.image_api_key is not None and payload.image_api_key.strip():
+        config.image_api_key = payload.image_api_key.strip()
 
     db.commit()
     db.refresh(config)
@@ -194,6 +234,7 @@ async def random_story_topics(
 @app.post("/api/stories", response_model=StoryRead)
 async def create_story(
     payload: StoryCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Story:
@@ -218,6 +259,13 @@ async def create_story(
     db.add(story)
     db.commit()
     db.refresh(story)
+    create_story_illustration_records(story, db, status="pending" if is_image_configured(config) else "unavailable")
+    if is_image_configured(config):
+        background_tasks.add_task(
+            generate_story_illustrations_task,
+            story.id,
+            runtime_image_config(config),
+        )
     return story
 
 
@@ -230,6 +278,38 @@ def get_story(
     story = db.scalar(select(Story).where(Story.id == story_id, Story.user_id == user.id))
     if not story:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="故事不存在")
+    synchronize_story_chapters(story, db, status="unavailable")
+    return story
+
+
+@app.post("/api/stories/{story_id}/illustrations", response_model=StoryRead)
+def generate_story_illustrations(
+    story_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Story:
+    story = db.scalar(select(Story).where(Story.id == story_id, Story.user_id == user.id))
+    if not story:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="故事不存在")
+    config = db.scalar(select(AIConfig).where(AIConfig.user_id == user.id))
+    if not is_image_configured(config):
+        raise HTTPException(status_code=422, detail="请先配置图像模型的 Base URL、API Key 和模型名称")
+    if not synchronize_story_chapters(story, db):
+        if not story.illustrations:
+            create_story_illustration_records(story, db)
+        else:
+            for illustration in story.illustrations:
+                illustration.status = "pending"
+                illustration.image_path = None
+                illustration.error = None
+            db.commit()
+    background_tasks.add_task(
+        generate_story_illustrations_task,
+        story.id,
+        runtime_image_config(config),
+    )
+    db.refresh(story)
     return story
 
 
@@ -257,5 +337,35 @@ def delete_story(
     story = db.scalar(select(Story).where(Story.id == story_id, Story.user_id == user.id))
     if not story:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="故事不存在")
+    remove_story_illustrations(story.id)
     db.delete(story)
     db.commit()
+
+
+def create_story_illustration_records(story: Story, db: Session, status: str = "pending") -> None:
+    if story.illustrations:
+        return
+    for chapter_index, chapter_text in enumerate(split_story_chapters(story.content, language=story.language)):
+        db.add(
+            StoryIllustration(
+                story_id=story.id,
+                chapter_index=chapter_index,
+                chapter_text=chapter_text,
+                status=status,
+            )
+        )
+    db.commit()
+    db.refresh(story)
+
+
+def synchronize_story_chapters(story: Story, db: Session, status: str = "pending") -> bool:
+    chapters = split_story_chapters(story.content, language=story.language)
+    stored_chapters = [illustration.chapter_text for illustration in story.illustrations]
+    if stored_chapters == chapters:
+        return False
+
+    remove_story_illustrations(story.id)
+    story.illustrations.clear()
+    db.flush()
+    create_story_illustration_records(story, db, status=status)
+    return True

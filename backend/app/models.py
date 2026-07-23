@@ -40,6 +40,31 @@ class Story(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
 
     owner: Mapped[User] = relationship("User", back_populates="stories")
+    illustrations: Mapped[list["StoryIllustration"]] = relationship(
+        "StoryIllustration",
+        back_populates="story",
+        cascade="all, delete-orphan",
+        order_by="StoryIllustration.chapter_index",
+    )
+
+
+class StoryIllustration(Base):
+    __tablename__ = "story_illustrations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"), index=True, nullable=False)
+    chapter_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    chapter_text: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    story: Mapped[Story] = relationship("Story", back_populates="illustrations")
+
+    @property
+    def image_url(self) -> str | None:
+        return f"/api/media/{self.image_path}" if self.image_path else None
 
 
 class AIConfig(Base):
@@ -50,6 +75,10 @@ class AIConfig(Base):
     base_url: Mapped[str] = mapped_column(String(500), default="https://api.openai.com/v1", nullable=False)
     api_key: Mapped[str] = mapped_column(Text, default="", nullable=False)
     model: Mapped[str] = mapped_column(String(160), default="gpt-4o-mini", nullable=False)
+    image_base_url: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    image_api_key: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    image_model: Mapped[str] = mapped_column(String(160), default="gpt-image-2", nullable=False)
+    image_headers: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     headers: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     extra_prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

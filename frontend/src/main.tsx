@@ -112,9 +112,13 @@ const prenatalStoryTopics = [
 const emptyAIConfig: AIConfig = {
   base_url: "https://api.openai.com/v1",
   model: "gpt-4o-mini",
+  image_base_url: "",
+  image_model: "gpt-image-2",
+  image_headers: "{}",
   headers: "{}",
   extra_prompt: "",
-  has_api_key: false
+  has_api_key: false,
+  has_image_api_key: false
 };
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
@@ -258,6 +262,26 @@ function App() {
       setMessage(getErrorMessage(err, "故事加载失败"));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshStoryIllustrations(id: number) {
+    if (!token) return;
+    try {
+      const refreshed = await api.getStory(token, id);
+      setSelected((current) => current?.id === id ? refreshed : current);
+    } catch (err) {
+      setMessage(getErrorMessage(err, "章节画面加载失败"));
+    }
+  }
+
+  async function generateStoryIllustrations(id: number) {
+    if (!token) return;
+    try {
+      const updated = await api.generateStoryIllustrations(token, id);
+      setSelected(updated);
+    } catch (err) {
+      setMessage(getErrorMessage(err, "章节画面生成任务启动失败"));
     }
   }
 
@@ -411,6 +435,8 @@ function App() {
           loading={loading}
           markingRead={selected ? readingId === selected.id : false}
           onRead={onRead}
+          onRefreshIllustrations={refreshStoryIllustrations}
+          onGenerateIllustrations={generateStoryIllustrations}
         />
       </section>
     </main>
@@ -563,19 +589,29 @@ function AIConfigPanel({
   const [baseUrl, setBaseUrl] = useState(config.base_url);
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(config.model);
+  const [imageBaseUrl, setImageBaseUrl] = useState(config.image_base_url);
+  const [imageApiKey, setImageApiKey] = useState("");
+  const [imageModel, setImageModel] = useState(config.image_model);
+  const [imageHeaders, setImageHeaders] = useState(config.image_headers);
   const [headers, setHeaders] = useState(config.headers);
   const [extraPrompt, setExtraPrompt] = useState(config.extra_prompt);
   const [clearKey, setClearKey] = useState(false);
+  const [clearImageKey, setClearImageKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     setBaseUrl(config.base_url);
     setModel(config.model);
+    setImageBaseUrl(config.image_base_url);
+    setImageModel(config.image_model);
+    setImageHeaders(config.image_headers);
     setHeaders(config.headers);
     setExtraPrompt(config.extra_prompt);
     setApiKey("");
     setClearKey(false);
+    setImageApiKey("");
+    setClearImageKey(false);
   }, [config]);
 
   async function submit(event: FormEvent) {
@@ -584,7 +620,11 @@ function AIConfigPanel({
     setSaving(true);
     try {
       const parsedHeaders = JSON.parse(headers || "{}");
-      if (!parsedHeaders || Array.isArray(parsedHeaders) || typeof parsedHeaders !== "object") {
+      const parsedImageHeaders = JSON.parse(imageHeaders || "{}");
+      if (
+        !parsedHeaders || Array.isArray(parsedHeaders) || typeof parsedHeaders !== "object" ||
+        !parsedImageHeaders || Array.isArray(parsedImageHeaders) || typeof parsedImageHeaders !== "object"
+      ) {
         setError("Headers 必须是合法的 JSON 对象");
         return;
       }
@@ -592,9 +632,14 @@ function AIConfigPanel({
         base_url: baseUrl,
         api_key: apiKey || null,
         model,
+        image_base_url: imageBaseUrl,
+        image_api_key: imageApiKey || null,
+        image_model: imageModel,
+        image_headers: imageHeaders || "{}",
         headers: headers || "{}",
         extra_prompt: extraPrompt,
-        clear_api_key: clearKey
+        clear_api_key: clearKey,
+        clear_image_api_key: clearImageKey
       });
       onSaved(saved);
     } catch (err) {
@@ -618,6 +663,12 @@ function AIConfigPanel({
       {loading && (
         <p className="inline-loading"><LoaderCircle className="spin" size={16} /> AI 配置加载中...</p>
       )}
+
+      <section className="model-config-section text-model-section">
+        <div className="model-config-heading">
+          <span>文本模型</span>
+          <small>用于生成故事与随机主题</small>
+        </div>
 
       <label>
         Base URL
@@ -662,6 +713,58 @@ function AIConfigPanel({
           placeholder="例如：更有音乐感，不出现惊吓情节；也可以写“控制在 800 字左右”。"
         />
       </label>
+      </section>
+
+      <section className="model-config-section image-model-section">
+        <div className="model-config-heading">
+          <span>图像模型</span>
+          <small>用于生成章节剧情背景</small>
+        </div>
+
+      <label>
+        图像 Base URL
+        <input
+          value={imageBaseUrl}
+          onChange={(event) => setImageBaseUrl(event.target.value)}
+          placeholder="例如：https://api.edgefn.net/v1"
+          disabled={loading || saving}
+        />
+      </label>
+
+      <label>
+        图像 API Key
+        <input
+          value={imageApiKey}
+          onChange={(event) => setImageApiKey(event.target.value)}
+          placeholder={config.has_image_api_key ? "已保存，留空则保持不变" : "未配置时不会生成章节画面"}
+          type="password"
+          disabled={loading || saving}
+        />
+      </label>
+
+      {config.has_image_api_key && (
+        <label className="check-row">
+          <input type="checkbox" checked={clearImageKey} onChange={(event) => setClearImageKey(event.target.checked)} disabled={loading || saving} />
+          清空已保存的图像 API Key
+        </label>
+      )}
+
+      <label>
+        图像模型名称
+        <input
+          value={imageModel}
+          onChange={(event) => setImageModel(event.target.value)}
+          placeholder="例如：gpt-image-2"
+          disabled={loading || saving}
+          required
+        />
+      </label>
+
+      <label>
+        图像 Headers JSON
+        <textarea value={imageHeaders} onChange={(event) => setImageHeaders(event.target.value)} disabled={loading || saving} rows={3} />
+      </label>
+      </section>
 
       <button className="primary-button" disabled={loading || saving}>
         {saving ? <LoaderCircle className="spin" size={18} /> : <Save size={18} />}
@@ -683,7 +786,7 @@ function StoryCreator({
   setLoading: (loading: boolean) => void;
 }) {
   const [language, setLanguage] = useState("bilingual");
-  const [topic, setTopic] = useState("懂礼貌的小兔子");
+  const [topic, setTopic] = useState(() => pickLocalTopics("", 1)[0] ?? prenatalStoryTopics[0]);
   const [extraPrompt, setExtraPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [randomizingTopic, setRandomizingTopic] = useState(false);
@@ -869,12 +972,16 @@ function StoryReader({
   story,
   loading,
   markingRead,
-  onRead
+  onRead,
+  onRefreshIllustrations,
+  onGenerateIllustrations
 }: {
   story: Story | null;
   loading: boolean;
   markingRead: boolean;
   onRead: (id: number) => Promise<void>;
+  onRefreshIllustrations: (id: number) => Promise<void>;
+  onGenerateIllustrations: (id: number) => Promise<void>;
 }) {
   const readerRef = useRef<HTMLElement | null>(null);
   const markedRef = useRef<number | null>(null);
@@ -916,6 +1023,17 @@ function StoryReader({
       window.removeEventListener("resize", updateWindowBackTop);
     };
   }, [story, onRead]);
+
+  useEffect(() => {
+    const illustrations = story?.illustrations ?? [];
+    if (!story || !illustrations.some((item) => item.status === "pending" || item.status === "generating")) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void onRefreshIllustrations(story.id);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [story, onRefreshIllustrations]);
 
   function handleScroll() {
     const node = readerRef.current;
@@ -964,18 +1082,76 @@ function StoryReader({
           {markingRead ? "标记中..." : story.is_read ? "已读" : "读到末尾后标记"}
         </span>
       </div>
-      <StoryIllustration story={story} />
-      <article className="story-content">
-        {story.content.split("\n").filter(Boolean).map((paragraph, index) => (
-          <p key={`${story.id}-${index}`}>{paragraph}</p>
-        ))}
-      </article>
+      <StoryChapters story={story} onGenerate={onGenerateIllustrations} />
       {showBackTop && (
         <button className="back-top-button" type="button" onClick={scrollBackToTop} aria-label="回到顶部" title="回到顶部">
           <ArrowUp size={20} />
         </button>
       )}
     </section>
+  );
+}
+
+function StoryChapters({
+  story,
+  onGenerate
+}: {
+  story: Story;
+  onGenerate: (id: number) => Promise<void>;
+}) {
+  const illustrations = story.illustrations ?? [];
+
+  if (!illustrations.length) {
+    return (
+      <article className="story-content">
+        <button className="generate-illustrations-button" type="button" onClick={() => void onGenerate(story.id)}>
+          <Sparkles size={17} />
+          生成章节画面
+        </button>
+        {story.content.split("\n").filter(Boolean).map((paragraph, index) => (
+          <p key={`${story.id}-${index}`}>{paragraph}</p>
+        ))}
+      </article>
+    );
+  }
+
+  const canRegenerate = illustrations.length > 0;
+  return (
+    <article className="story-chapters">
+      {illustrations.map((chapter) => {
+        const imageUrl = chapter.image_url ? api.mediaUrl(chapter.image_url) : null;
+        const hasImage = chapter.status === "ready" && imageUrl;
+        return (
+          <section
+            className={hasImage ? "story-chapter has-image" : "story-chapter"}
+            key={chapter.id}
+          >
+            {hasImage && <img className="chapter-artwork" src={imageUrl} alt="" />}
+            <div className="story-chapter-overlay">
+              <p className="chapter-label">章节 {String(chapter.chapter_index + 1).padStart(2, "0")}</p>
+              {chapter.status === "pending" || chapter.status === "generating" ? (
+                <p className="chapter-generation"><LoaderCircle className="spin" size={16} /> 正在生成与本章剧情对应的画面</p>
+              ) : chapter.status === "failed" ? (
+                <p className="chapter-generation failed" title={chapter.error || undefined}>
+                  {chapter.error ? `图像服务返回：${chapter.error}` : "本章画面暂未生成"}
+                </p>
+              ) : chapter.status === "unavailable" ? (
+                <p className="chapter-generation">等待图像模型配置</p>
+              ) : null}
+              {chapter.chapter_text.split("\n").filter(Boolean).map((paragraph, index) => (
+                <p key={`${chapter.id}-${index}`}>{paragraph}</p>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+      {canRegenerate && (
+        <button className="generate-illustrations-button" type="button" onClick={() => void onGenerate(story.id)}>
+          <Sparkles size={17} />
+          重新生成章节画面
+        </button>
+      )}
+    </article>
   );
 }
 
@@ -1007,7 +1183,7 @@ function Toast({
 }
 
 function StoryIllustration({ story }: { story: Story }) {
-  const scene = getIllustrationScene(`${story.title} ${story.topic}`);
+  const scene = getIllustrationScene(`${story.title}\n${story.topic}\n${story.content}`);
 
   return (
     <figure className={`story-illustration ${scene.kind}`} aria-label={`${story.title} 插图`}>
@@ -1030,7 +1206,7 @@ function StoryIllustration({ story }: { story: Story }) {
         <path d="M72 230 C104 184 154 188 178 230 Z" fill="#8ebf75" opacity="0.78" />
         <path d="M590 220 C622 170 682 176 712 220 Z" fill="#8ebf75" opacity="0.62" />
         <g filter={`url(#soft-${story.id})`}>
-          <StoryAnimal scene={scene.kind} />
+          <StoryAnimal scene={scene.character} />
           <StoryProp scene={scene.kind} />
         </g>
         <text x="42" y="268" fill="#4e3b36" fontSize="22" fontWeight="800">{scene.caption}</text>
@@ -1040,7 +1216,7 @@ function StoryIllustration({ story }: { story: Story }) {
 }
 
 function StoryAnimal({ scene }: { scene: string }) {
-  const color = scene === "bear" ? "#b9865f" : scene === "cat" ? "#f4a6b7" : scene === "elephant" ? "#9db7c6" : "#f1c28b";
+  const color = scene === "bear" ? "#b9865f" : scene === "cat" ? "#f4a6b7" : scene === "elephant" ? "#9db7c6" : scene === "fox" ? "#e98b5e" : scene === "deer" ? "#c99667" : scene === "duck" ? "#f5cf62" : "#f1c28b";
   const earColor = scene === "elephant" ? "#b9ced8" : color;
 
   return (
@@ -1055,7 +1231,15 @@ function StoryAnimal({ scene }: { scene: string }) {
           <ellipse cx="348" cy="76" rx="18" ry="46" fill="#f1c28b" />
         </>
       )}
+      {scene === "deer" && (
+        <>
+          <path d="M290 83 L278 48 M290 72 L266 58 M346 83 L358 48 M346 72 L370 58" fill="none" stroke="#855f45" strokeWidth="7" strokeLinecap="round" />
+          <circle cx="306" cy="144" r="6" fill="#fff4df" opacity="0.9" />
+          <circle cx="330" cy="152" r="5" fill="#fff4df" opacity="0.9" />
+        </>
+      )}
       {scene === "elephant" && <path d="M344 144 C396 156 390 210 350 205" fill="none" stroke="#9db7c6" strokeWidth="22" strokeLinecap="round" />}
+      {scene === "duck" && <path d="M314 142 L352 148 L314 157 Z" fill="#e98754" />}
       <circle cx="300" cy="126" r="5" fill="#2f2522" />
       <circle cx="338" cy="126" r="5" fill="#2f2522" />
       <path d="M304 150 Q318 162 334 150" fill="none" stroke="#604a42" strokeWidth="5" strokeLinecap="round" />
@@ -1068,6 +1252,80 @@ function StoryAnimal({ scene }: { scene: string }) {
 }
 
 function StoryProp({ scene }: { scene: string }) {
+  if (scene === "book") {
+    return (
+      <g>
+        <path d="M448 168 Q486 146 522 168 V236 Q486 214 448 236 Z" fill="#f7d997" />
+        <path d="M522 168 Q558 146 596 168 V236 Q558 214 522 236 Z" fill="#f1a76f" />
+        <path d="M522 168 V236" stroke="#a9654a" strokeWidth="6" />
+        <path d="M468 185 H503 M468 201 H503 M541 185 H576 M541 201 H576" stroke="#fff8e7" strokeWidth="5" strokeLinecap="round" />
+      </g>
+    );
+  }
+  if (scene === "garden") {
+    return (
+      <g>
+        <path d="M520 238 V170 M520 205 L488 186 M520 192 L554 174" stroke="#619557" strokeWidth="8" strokeLinecap="round" />
+        <circle cx="520" cy="152" r="25" fill="#f3a7b9" />
+        <circle cx="498" cy="168" r="20" fill="#f8d66e" />
+        <circle cx="544" cy="168" r="20" fill="#f8d66e" />
+        <circle cx="520" cy="168" r="12" fill="#c98045" />
+        <path d="M472 238 C478 212 492 212 500 238 M540 238 C548 212 566 212 574 238" fill="#79ad68" />
+      </g>
+    );
+  }
+  if (scene === "rain") {
+    return (
+      <g>
+        <path d="M466 190 Q520 122 578 190 Z" fill="#85bdd1" />
+        <path d="M520 188 V244 Q520 256 534 256" fill="none" stroke="#6f7979" strokeWidth="8" strokeLinecap="round" />
+        <path d="M470 112 L454 140 M500 104 L490 136 M534 106 L546 138 M566 118 L584 144" stroke="#72b6d3" strokeWidth="8" strokeLinecap="round" />
+      </g>
+    );
+  }
+  if (scene === "music") {
+    return (
+      <g>
+        <path d="M482 150 V214 M482 150 L548 136 V200" fill="none" stroke="#8f6ab0" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="468" cy="216" r="16" fill="#8f6ab0" />
+        <circle cx="534" cy="202" r="16" fill="#8f6ab0" />
+        <path d="M570 158 V206 M570 158 L606 150" fill="none" stroke="#f09b60" strokeWidth="7" strokeLinecap="round" />
+        <circle cx="562" cy="210" r="12" fill="#f09b60" />
+      </g>
+    );
+  }
+  if (scene === "paint") {
+    return (
+      <g>
+        <ellipse cx="520" cy="204" rx="62" ry="38" fill="#f2c98d" transform="rotate(-14 520 204)" />
+        <circle cx="492" cy="188" r="10" fill="#e97872" />
+        <circle cx="518" cy="180" r="10" fill="#79aec9" />
+        <circle cx="542" cy="196" r="10" fill="#f0c95a" />
+        <circle cx="510" cy="216" r="9" fill="#87b46d" />
+        <ellipse cx="550" cy="218" rx="13" ry="9" fill="#fff4df" />
+        <path d="M574 156 L602 224" stroke="#8c6a50" strokeWidth="9" strokeLinecap="round" />
+        <path d="M570 146 L580 164" stroke="#e97872" strokeWidth="9" strokeLinecap="round" />
+      </g>
+    );
+  }
+  if (scene === "night") {
+    return (
+      <g>
+        <path d="M530 142 A38 38 0 1 0 563 192 A32 32 0 1 1 530 142" fill="#fff2a5" />
+        <path d="M476 166 L480 176 M470 171 L486 171 M580 130 L584 142 M578 136 L590 136 M608 184 L612 194 M604 189 L620 189" stroke="#fff7cf" strokeWidth="5" strokeLinecap="round" />
+      </g>
+    );
+  }
+  if (scene === "meal") {
+    return (
+      <g>
+        <ellipse cx="522" cy="217" rx="64" ry="25" fill="#fff5dd" />
+        <path d="M476 202 Q522 250 568 202 Z" fill="#e98372" />
+        <path d="M490 202 Q522 218 554 202" fill="none" stroke="#fff5dd" strokeWidth="6" />
+        <path d="M584 168 V226 M598 168 V226 M584 182 H598" stroke="#8b7666" strokeWidth="6" strokeLinecap="round" />
+      </g>
+    );
+  }
   if (scene === "wash") {
     return (
       <g>
@@ -1118,6 +1376,48 @@ function StoryProp({ scene }: { scene: string }) {
 }
 
 function getIllustrationScene(text: string) {
+  return {
+    ...(getContentIllustrationScene(text) ?? getIllustrationTheme(text)),
+    character: getIllustrationCharacter(text)
+  };
+}
+
+function getContentIllustrationScene(text: string) {
+  if (/\u7ed8\u753b|\u5f69\u7b14|\u753b\u753b|paint|draw|color/i.test(text)) {
+    return { kind: "paint", caption: "\u628a\u5fc3\u60c5\u753b\u6210\u4e94\u5f69\u7684\u6545\u4e8b", skyStart: "#fff0f4", skyEnd: "#eaf8ff", ground: "#d8e9bb" };
+  }
+  if (/\u9605\u8bfb|\u56fe\u4e66|\u4e66\u672c|\u8bfb\u4e66|book|read|library/i.test(text)) {
+    return { kind: "book", caption: "\u7ffb\u5f00\u4e66\u9875\uff0c\u9047\u89c1\u65b0\u4e16\u754c", skyStart: "#fff7e8", skyEnd: "#e8f6ff", ground: "#dce9bd" };
+  }
+  if (/\u82b1\u56ed|\u79cd\u82b1|\u79cd\u5b50|\u5411\u65e5\u8475|\u82b1\u6735|\u53f6\u5b50|garden|plant|flower|seed/i.test(text)) {
+    return { kind: "garden", caption: "\u5c0f\u5c0f\u79cd\u5b50\uff0c\u6162\u6162\u957f\u6210\u82b1", skyStart: "#effce9", skyEnd: "#fff2db", ground: "#cce6ae" };
+  }
+  if (/\u96e8|\u4f1e|\u6c34\u6ef4|\u8717\u725b|rain|umbrella|raindrop/i.test(text)) {
+    return { kind: "rain", caption: "\u96e8\u6ef4\u513f\u4e5f\u6709\u6e29\u67d4\u7684\u65c5\u7a0b", skyStart: "#e7f6ff", skyEnd: "#f4fbff", ground: "#c9e2bd" };
+  }
+  if (/\u5531\u6b4c|\u97f3\u4e50|\u4e50\u5668|\u6b4c\u58f0|music|sing|song/i.test(text)) {
+    return { kind: "music", caption: "\u8ba9\u52c7\u6c14\u8ddf\u7740\u6b4c\u58f0\u98d8\u8d77\u6765", skyStart: "#f4efff", skyEnd: "#fff1dc", ground: "#d7e8bc" };
+  }
+  if (/\u5403\u996d|\u996d\u83dc|\u65e9\u9910|\u98df\u7269|\u679c\u5b50|meal|food|breakfast|eat/i.test(text)) {
+    return { kind: "meal", caption: "\u597d\u597d\u5403\u996d\uff0c\u4eab\u53d7\u6e29\u6696\u65f6\u5149", skyStart: "#fff5e6", skyEnd: "#fff0f2", ground: "#d7e9bb" };
+  }
+  if (/\u6708\u5149|\u661f\u661f|\u591c\u665a|\u7761\u524d|moon|star|night|sleep/i.test(text)) {
+    return { kind: "night", caption: "\u661f\u5149\u5b88\u62a4\u7740\u5b89\u9759\u7684\u68a6", skyStart: "#cde5f5", skyEnd: "#f7e4d0", ground: "#c3dbae" };
+  }
+  return null;
+}
+
+function getIllustrationCharacter(text: string) {
+  if (/\u5c0f\u8c61|elephant/i.test(text)) return "elephant";
+  if (/\u5c0f\u718a|bear/i.test(text)) return "bear";
+  if (/\u5c0f\u732b|cat/i.test(text)) return "cat";
+  if (/\u5c0f\u72d0\u72f8|fox/i.test(text)) return "fox";
+  if (/\u5c0f\u9e7f|deer/i.test(text)) return "deer";
+  if (/\u5c0f\u9e2d|duck/i.test(text)) return "duck";
+  return "rabbit";
+}
+
+function getIllustrationTheme(text: string) {
   if (/洗手|水果|干净|clean|wash/i.test(text)) {
     return { kind: "wash", caption: "干干净净，安心长大", skyStart: "#e8fbff", skyEnd: "#fff6e8", ground: "#cbe8bb" };
   }

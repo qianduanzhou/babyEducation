@@ -111,7 +111,13 @@ def language_instruction(language: str) -> str:
         return "Use Chinese only. Default to about 500 simple Chinese characters unless the user's prompt asks for another length. Use a warm children's moral-story style."
     if language == "en":
         return "Use English only. Default to about 500 simple English words unless the user's prompt asks for another length. Use a warm children's moral-story style."
-    return "Use bilingual Chinese and English. For each short paragraph, write Chinese first, then matching English. Use a warm children's moral-story style."
+    return (
+        "Use bilingual Chinese and English. Use as many natural plot sections as the story needs. "
+        "In every section, write one Chinese paragraph followed immediately by its matching English translation, "
+        "with no blank line between the pair. Put one blank line only between sections. "
+        "Never put all Chinese text before all English text and never add a second translated title. "
+        "Use a warm children's moral-story style."
+    )
 
 
 async def generate_story(
@@ -125,6 +131,7 @@ async def generate_story(
         f"Story topic: {topic}",
         language_instruction(language),
         "Style rule: make it like a simple animal children's story with a gentle life lesson, not a dreamy poem.",
+        "Structure rule: divide the story into natural plot sections separated by blank lines; use only as many sections as the story needs, so each can have its own matching illustration.",
         "Length rule: use the default medium length unless the extra prompt clearly changes the desired length.",
     ]
     if llm_config.extra_prompt:
@@ -247,13 +254,12 @@ def parse_headers(raw_headers: str) -> dict[str, str]:
 
 
 def split_title(content: str, topic: str) -> tuple[str, str]:
-    lines = [line.strip() for line in content.splitlines()]
-    lines = [line for line in lines if line]
+    lines = content.strip().splitlines()
     if not lines:
         return topic[:80], content
     first = re.sub(r"^(Title|标题)\s*[:：]\s*", "", lines[0]).strip()
     title = first[:160] or topic[:80]
-    body = "\n\n".join(lines[1:]).strip() or content.strip()
+    body = "\n".join(lines[1:]).strip() or content.strip()
     return title, body
 
 
