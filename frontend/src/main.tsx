@@ -1000,10 +1000,9 @@ function StoryReader({
     function updateWindowBackTop() {
       const doc = document.documentElement;
       const scrollTop = window.scrollY || doc.scrollTop;
+      const canScroll = doc.scrollHeight > window.innerHeight + 24;
+      setShowBackTop(canScroll && scrollTop >= window.innerHeight * 0.5);
       const isLongPage = doc.scrollHeight > window.innerHeight + 320;
-      if (isLongPage) {
-        setShowBackTop(scrollTop + window.innerHeight >= doc.scrollHeight - 260);
-      }
       if (
         isLongPage &&
         !activeStory.is_read &&
@@ -1039,8 +1038,7 @@ function StoryReader({
     const node = readerRef.current;
     if (!node || !story) return;
     const canScroll = node.scrollHeight > node.clientHeight + 24;
-    const nearBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 220;
-    setShowBackTop(canScroll && nearBottom);
+    setShowBackTop(canScroll && node.scrollTop >= node.clientHeight * 0.5);
     if (story.is_read || markedRef.current === story.id) return;
     const reachedBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 12;
     if (reachedBottom) {

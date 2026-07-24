@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,7 @@ from .llm import parse_headers
 from .models import StoryIllustration
 
 
+logger = logging.getLogger(__name__)
 _CJK_CHARACTER = re.compile(r"[\u4e00-\u9fff]")
 _ENGLISH_WORD = re.compile(r"[A-Za-z]{3,}")
 
@@ -92,15 +94,44 @@ Story title: {title}
 Story topic: {topic}
 Chapter plot: {chapter_text}
 Primary request: portray the specific action, setting, and emotion of this chapter, not a generic animal scene.
+Character continuity lock: this story has one canonical main protagonist. Establish the protagonist's visual identity in the first chapter and keep it exactly the same in every later chapter. Keep the same species, age, body proportions, face, fur/skin color, eye color, markings, hairstyle, clothing, and accessories. Do not replace the protagonist with another animal or child, and do not redesign the protagonist between chapters.
+If a character reference image is attached, it is the canonical appearance of the protagonist. Reuse that protagonist exactly, while changing only the chapter action, setting, pose, and supporting characters.
 Style/medium: warm hand-painted children's book illustration, soft paper texture, gentle natural light, calm joyful mood, rich but restrained colors.
 Composition/framing: wide landscape scene with the main action visible in the center and enough quieter space for readable text overlay.
 Constraints: safe and soothing for prenatal and young-child reading; preserve character continuity with the rest of the story; no written words, letters, captions, logos, watermark, frame, frightening content, injury, weapons, or harsh conflict.
 """.strip()
 
 
+def build_image_message(prompt: str, reference_image: bytes | None = None) -> dict[str, object]:
+    if reference_image is None:
+        return {"role": "user", "content": prompt}
+
+    if reference_image.lstrip().startswith(b"<svg"):
+        media_type = "image/svg+xml"
+    elif reference_image.startswith(b"\xff\xd8\xff"):
+        media_type = "image/jpeg"
+    elif reference_image.startswith(b"GIF8"):
+        media_type = "image/gif"
+    else:
+        media_type = "image/png"
+
+    encoded_image = base64.b64encode(reference_image).decode("ascii")
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{media_type};base64,{encoded_image}"},
+            },
+        ],
+    }
+
+
 async def generate_illustration_image(
     config: ImageRuntimeConfig,
     prompt: str,
+    reference_image: bytes | None = None,
 ) -> bytes:
     if not config.api_key:
         raise ValueError("An API key is required before chapter illustrations can be generated")
@@ -111,7 +142,7 @@ async def generate_illustration_image(
     }
     payload = {
         "model": config.model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [build_image_message(prompt, reference_image)],
         "stream": False,
     }
     settings = get_settings()
@@ -124,8 +155,20 @@ async def generate_illustration_image(
         image_endpoint = f"{base_url}/v1/chat/completions"
     async with httpx.AsyncClient(timeout=settings.image_request_timeout_seconds) as client:
         response = await client.post(image_endpoint, headers=headers, json=payload)
+        if response.is_error and reference_image is not None:
+            # Some OpenAI-compatible image endpoints do not accept multimodal input.
+            # Keep generation working there while retaining the continuity prompt.
+            payload["messages"] = [build_image_message(prompt)]
+            response = await client.post(image_endpoint, headers=headers, json=payload)
         if response.is_error:
             detail = response.text.strip().replace("\n", " ")
+            logger.error(
+                "Image request failed: endpoint=%s status=%s model=%s detail=%s",
+                image_endpoint,
+                response.status_code,
+                config.model,
+                detail[:1000],
+            )
             raise ValueError(f"Image chat request failed (HTTP {response.status_code}): {detail[:800]}")
         response.raise_for_status()
         image_reference = extract_chat_image(response.json())
@@ -190,6 +233,7 @@ async def _generate_story_illustrations(story_id: int, config: ImageRuntimeConfi
     settings = get_settings()
     output_root = Path(settings.generated_images_dir)
     database = SessionLocal()
+    character_reference: bytes | None = None
     try:
         illustrations = list(database.scalars(
             select(StoryIllustration).where(StoryIllustration.story_id == story_id).order_by(StoryIllustration.chapter_index)
@@ -207,7 +251,10 @@ async def _generate_story_illustrations(story_id: int, config: ImageRuntimeConfi
                 )
                 illustration.prompt = prompt
                 database.commit()
-                image_bytes = await generate_illustration_image(config, prompt)
+                image_bytes = await generate_illustration_image(config, prompt, character_reference)
+                if character_reference is None:
+                    # Anchor all later chapters to the first successful character design.
+                    character_reference = image_bytes
                 extension = "svg" if image_bytes.lstrip().startswith(b"<svg") else "png"
                 relative_path = Path(f"story-{story_id}") / f"chapter-{illustration.chapter_index + 1}.{extension}"
                 destination = output_root / relative_path
@@ -219,6 +266,12 @@ async def _generate_story_illustrations(story_id: int, config: ImageRuntimeConfi
             except Exception as exc:
                 illustration.status = "failed"
                 illustration.error = str(exc)[:500]
+                logger.exception(
+                    "Chapter illustration failed: story_id=%s chapter_index=%s model=%s",
+                    story_id,
+                    illustration.chapter_index,
+                    config.model,
+                )
             database.commit()
     finally:
         database.close()
